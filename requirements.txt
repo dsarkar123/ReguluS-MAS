@@ -1,0 +1,4 @@
+google-generativeai
+chromadb
+PyMuPDF
+ipykernel
