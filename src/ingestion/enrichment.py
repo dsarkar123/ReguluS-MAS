@@ -2,11 +2,12 @@ import google.generativeai as genai
 import json
 import os
 import time
+import re
 
 def enrich_and_embed(structured_data_path, output_path):
     """
     Enriches structured data with summaries, questions, and embeddings
-    using the Google AI SDK.
+    using the Google AI SDK in a batch-efficient manner.
 
     Args:
         structured_data_path (str): Path to the structured JSON file.
@@ -16,9 +17,6 @@ def enrich_and_embed(structured_data_path, output_path):
     api_key = os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         print("Error: GOOGLE_API_KEY environment variable not set.")
-        print("Please set the environment variable and try again.")
-        # We will request this from the user in the next step.
-        # For now, we exit gracefully.
         return
 
     genai.configure(api_key=api_key)
@@ -30,7 +28,7 @@ def enrich_and_embed(structured_data_path, output_path):
     enriched_nodes = []
 
     # Initialize models
-    generative_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+    generative_model = genai.GenerativeModel('gemini-1.5-pro-latest')
     embedding_model = "models/text-embedding-004"
 
     print(f"Starting enrichment for {len(data['content'])} nodes...")
@@ -43,44 +41,42 @@ def enrich_and_embed(structured_data_path, output_path):
         print(f"  Processing node {i+1}/{len(data['content'])} ({node['node_id']})...")
 
         try:
-            # 3. Generate Summary and Hypothetical Question
-            summary_prompt = f"""
-            You are a legal expert specializing in financial regulations.
-            Summarize the following text from a Monetary Authority of Singapore (MAS) notice.
-            Focus on the key requirements, obligations, and definitions.
-            The summary should be concise and clear.
+            # 3. Generate Summary and Question in a single call
+            prompt = f"""
+            You are a helpful AI assistant. Analyze the following text from a Monetary Authority of Singapore (MAS) notice.
 
             TEXT: "{text}"
+
+            Based on the text, provide the following in a valid JSON format with two keys: "summary" and "hypothetical_question".
+            1.  "summary": A concise summary of the key requirements, obligations, and definitions.
+            2.  "hypothetical_question": A specific, practical question a compliance officer might ask.
             """
-            summary_response = generative_model.generate_content(summary_prompt)
-            summary = summary_response.text
-            time.sleep(1) # Basic rate limiting
 
-            question_prompt = f"""
-            You are a compliance officer at a bank in Singapore.
-            Based on the following text from a MAS notice, what is one specific, hypothetical question
-            you might ask to clarify your obligations or to test your understanding of the rule?
-            The question should be practical and relevant to a banking context.
+            response = generative_model.generate_content(prompt)
 
-            TEXT: "{text}"
-            """
-            question_response = generative_model.generate_content(question_prompt)
-            hypothetical_question = question_response.text
-            time.sleep(1) # Basic rate limiting
+            # Clean up the response to extract only the JSON part
+            cleaned_response = response.text.strip().replace('```json', '').replace('```', '')
 
-            # 4. Generate Embeddings
-            # We embed the original text, the summary, and the hypothetical question.
-            content_embedding = genai.embed_content(model=embedding_model, content=text)['embedding']
-            summary_embedding = genai.embed_content(model=embedding_model, content=summary)['embedding']
-            question_embedding = genai.embed_content(model=embedding_model, content=hypothetical_question)['embedding']
+            generated_data = json.loads(cleaned_response)
+            summary = generated_data.get("summary", "Error: No summary found.")
+            hypothetical_question = generated_data.get("hypothetical_question", "Error: No question found.")
+
+            # 4. Generate Embeddings in a single batch call
+            texts_to_embed = [text, summary, hypothetical_question]
+            embedding_result = genai.embed_content(
+                model=embedding_model,
+                content=texts_to_embed,
+                task_type="RETRIEVAL_DOCUMENT"
+            )
+            embeddings = embedding_result['embedding']
 
             # 5. Assemble the enriched data object
             enriched_node = {
-                "id": node['node_id'], # Pinecone uses 'id'
-                "values": { # This structure can be adjusted for Pinecone
-                    "content": content_embedding,
-                    "summary": summary_embedding,
-                    "question": question_embedding,
+                "id": node['node_id'],
+                "values": {
+                    "content": embeddings[0],
+                    "summary": embeddings[1],
+                    "question": embeddings[2],
                 },
                 "metadata": {
                     "original_text": text,
@@ -95,10 +91,10 @@ def enrich_and_embed(structured_data_path, output_path):
             }
 
             enriched_nodes.append(enriched_node)
+            time.sleep(1) # Add a small delay to respect rate limits
 
         except Exception as e:
             print(f"    An error occurred while processing node {node['node_id']}: {e}")
-            # Continue to the next node
             continue
 
     # 6. Save the enriched data

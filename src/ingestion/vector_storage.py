@@ -1,6 +1,7 @@
 import os
 import json
 import chromadb
+from chromadb.utils.embedding_functions import GoogleGenerativeAiEmbeddingFunction
 
 def store_vectors_chroma(enriched_data_path, collection_name="mas_notices"):
     """
@@ -11,14 +12,26 @@ def store_vectors_chroma(enriched_data_path, collection_name="mas_notices"):
         collection_name (str): The name of the ChromaDB collection.
     """
     # 1. Initialize a persistent ChromaDB client
-    # This will store data in the 'db' directory.
     if not os.path.exists('db'):
         os.makedirs('db')
     client = chromadb.PersistentClient(path="db")
 
-    # 2. Get or create the collection
+    # 2. Define the embedding function from Google
+    api_key = os.environ.get("GOOGLE_API_KEY")
+    if not api_key:
+        raise ValueError("GOOGLE_API_KEY environment variable not set for ChromaDB.")
+
+    embedding_function = GoogleGenerativeAiEmbeddingFunction(
+        api_key=api_key,
+        model_name="models/text-embedding-004"
+    )
+
+    # 3. Get or create the collection with the specified embedding function
     print(f"Getting or creating collection: {collection_name}")
-    collection = client.get_or_create_collection(name=collection_name)
+    collection = client.get_or_create_collection(
+        name=collection_name,
+        embedding_function=embedding_function
+    )
     print(f"Collection '{collection_name}' ready.")
 
     # 3. Load the enriched data
