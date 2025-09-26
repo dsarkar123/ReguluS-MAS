@@ -4,32 +4,38 @@ import chromadb
 import google.generativeai as genai
 import json
 import time
+from chromadb.utils.embedding_functions import GoogleGenerativeAiEmbeddingFunction
 
 class Retriever:
     def __init__(self, collection_name="mas_notices", db_path="db"):
         # Initialize clients and models
         self.client = chromadb.PersistentClient(path=db_path)
-        self.collection = self.client.get_collection(name=collection_name)
-        print(f"Connected to ChromaDB. Collection '{collection_name}' has {self.collection.count()} documents.")
 
         self.api_key = os.environ.get("GOOGLE_API_KEY")
         if not self.api_key:
             raise ValueError("GOOGLE_API_KEY environment variable not set.")
         genai.configure(api_key=self.api_key)
-        self.embedding_model = "models/text-embedding-004"
-        self.generative_model = genai.GenerativeModel('gemini-1.5-flash-latest')
+
+        # Define the embedding function from Google
+        embedding_function = GoogleGenerativeAiEmbeddingFunction(
+            api_key=self.api_key,
+            model_name="models/text-embedding-004"
+        )
+
+        # Get the collection with the specified embedding function
+        self.collection = self.client.get_collection(
+            name=collection_name,
+            embedding_function=embedding_function
+        )
+        print(f"Connected to ChromaDB. Collection '{collection_name}' has {self.collection.count()} documents.")
+
+        self.generative_model = genai.GenerativeModel('gemini-1.5-pro-latest')
 
     def _search(self, user_query, n_results=10, doc_filter=None):
         """Internal method to perform the initial vector search using ChromaDB."""
-        print(f"Embedding query: '{user_query}'")
-        query_embedding = genai.embed_content(
-            model=self.embedding_model,
-            content=user_query
-        )['embedding']
-
-        print(f"Searching collection for top {n_results} results...")
+        print(f"Searching collection for top {n_results} results for query: '{user_query}'")
         query_params = {
-            'query_embeddings': [query_embedding],
+            'query_texts': [user_query], # Use query_texts to leverage the collection's embedding function
             'n_results': n_results
         }
         if doc_filter:
