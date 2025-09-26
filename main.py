@@ -18,6 +18,9 @@ def run_ingestion(pdf_path):
         print(f"Error: PDF file not found at {pdf_path}")
         return
 
+    # Create the data directory if it doesn't exist
+    os.makedirs("data", exist_ok=True)
+
     print(f"--- Starting Ingestion for {pdf_path} ---")
 
     # 1. Parsing
